@@ -271,9 +271,12 @@ python -m openadserver.trainer.evaluate \
 
 ## 📊 Benchmarks
 
-### Stress Test Results (2 vCPU / 6GB Server)
+### Stress Test Results (Simulated 2 vCPU / 6GB)
 
 Full pipeline tested: **Retrieval → Filter → Prediction → Ranking → Rerank**
+
+> **Test Environment:** SQLite in-memory + FakeRedis (zero external dependencies).
+> Results reflect core pipeline performance without network I/O overhead.
 
 | Model | QPS | Avg Latency | P95 | P99 | Relative |
 |-------|-----|-------------|-----|-----|----------|
@@ -281,7 +284,7 @@ Full pipeline tested: **Retrieval → Filter → Prediction → Ranking → Rera
 | **FM** | 166.1 | 5.99ms | 8.10ms | 11.54ms | 87.6% |
 | **DeepFM** | 151.2 | 6.58ms | 10.30ms | 14.13ms | 79.7% |
 
-### Pipeline Stage Breakdown
+### Pipeline Stage Breakdown (LR Model)
 
 ```
 ┌─────────────────┬───────────┬─────────────┐
@@ -295,24 +298,16 @@ Full pipeline tested: **Retrieval → Filter → Prediction → Ranking → Rera
 └─────────────────┴───────────┴─────────────┘
 ```
 
-### Capacity Planning (1M DAU)
+### Capacity Estimation (1M DAU)
 
 | Model | Single Server QPS | Peak QPS Needed | Servers Required |
 |-------|-------------------|-----------------|------------------|
-| **LR** | 189.7 | 870 | **5** |
-| **FM** | 166.1 | 870 | **6** |
-| **DeepFM** | 151.2 | 870 | **6** |
+| **LR** | ~190 | 870 | **5** |
+| **FM** | ~166 | 870 | **6** |
+| **DeepFM** | ~151 | 870 | **6** |
 
-> Calculation: 1M DAU × 15 requests/user/day = 15M daily → 174 avg QPS → 870 peak (5x factor)
-
-### Cloud Cost Estimates
-
-| Scale | DAU | Daily Requests | Servers (LR) | Monthly Cost |
-|-------|-----|----------------|--------------|--------------|
-| **Starter** | 100K | 1.5M | 1 | ~$30 |
-| **Growth** | 500K | 7.5M | 3 | ~$90 |
-| **Production** | 1M | 15M | 5 | ~$150 |
-| **Scale** | 5M | 75M | 25 | ~$750 |
+> **Note:** Calculation assumes 1M DAU × 15 requests/user/day = 15M daily → 174 avg QPS → 870 peak (5x factor).
+> Production deployments with PostgreSQL + Redis may have ~10-20% additional I/O overhead.
 
 ---
 
@@ -330,48 +325,30 @@ We use the [Criteo Display Advertising Challenge](https://www.kaggle.com/c/crite
 
 ### Model Comparison (100K Criteo Samples)
 
-| Model | Test AUC | Train Time | Model Size | Inference Speed |
-|-------|----------|------------|------------|-----------------|
-| **LR** | 0.7577 | 2 min | 0.49 MB | 193,878/s |
-| **FM** | 0.7472 | 5 min | 4.34 MB | 170,640/s |
-| **DeepFM** | 0.7178 | 15 min | 8.77 MB | 60,483/s |
+| Model | Test AUC | Model Size | Description |
+|-------|----------|------------|-------------|
+| **LR** | 0.7577 | 0.49 MB | Logistic Regression — fastest, best AUC |
+| **FM** | 0.7472 | 4.34 MB | Factorization Machine — captures feature interactions |
+| **DeepFM** | 0.7178 | 8.77 MB | Deep FM — deep learning + FM combined |
 
-> LR achieves highest AUC with fastest inference — recommended for production
+> LR achieves highest AUC with fastest inference — recommended for production.
 
-### Feature Engineering Pipeline
+### Feature Engineering
 
-```
-Raw Request                              Model Input
-    │                                         │
-    ▼                                         ▼
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ User        │    │ Feature     │    │ Sparse      │
-│ - user_id   │───▶│ Hashing &   │───▶│ [26 dims]   │
-│ - age       │    │ Encoding    │    │             │
-│ - interests │    │             │    │ Dense       │
-├─────────────┤    │ Numba JIT   │    │ [13 dims]   │
-│ Ad          │    │ Accelerated │    └─────────────┘
-│ - camp_id   │    │             │           │
-│ - creative  │    └─────────────┘           ▼
-├─────────────┤                       ┌─────────────┐
-│ Context     │                       │ LR/FM/      │
-│ - device    │                       │ DeepFM      │
-│ - geo       │                       │ Prediction  │
-└─────────────┘                       └─────────────┘
-```
+- **Numba JIT acceleration** for feature hashing and encoding
+- **Sparse features:** 26 categorical features (user, ad, context)
+- **Dense features:** 13 numerical features (normalized)
 
-### Run Your Own Stress Test
+### Run Stress Test
+
+The stress test uses **SQLite in-memory** for campaign data and **FakeRedis** for frequency capping, enabling zero-dependency testing:
 
 ```bash
-# Quick test (10 campaigns, 100 requests)
-python scripts/criteo/stress_test.py --campaigns 10 --requests 100 --model lr
+# Quick test (10 campaigns, 100 requests, no ML)
+python scripts/criteo/stress_test.py --campaigns 10 --requests 100 --no-ml
 
-# Production simulation (200 campaigns, 10K requests, 20 concurrent)
-python scripts/criteo/stress_test.py \
-  --campaigns 200 \
-  --requests 10000 \
-  --concurrent 20 \
-  --model fm
+# With ML model (LR recommended)
+python scripts/criteo/stress_test.py --campaigns 200 --requests 10000 --model lr
 
 # Compare all models
 python scripts/criteo/compare_models.py
