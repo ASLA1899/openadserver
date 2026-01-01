@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class DatabaseSettings(BaseSettings):
+class DatabaseSettings(BaseModel):
     """Database configuration."""
 
     host: str = "localhost"
@@ -35,7 +35,7 @@ class DatabaseSettings(BaseSettings):
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
 
 
-class RedisSettings(BaseSettings):
+class RedisSettings(BaseModel):
     """Redis configuration."""
 
     host: str = "localhost"
@@ -52,7 +52,7 @@ class RedisSettings(BaseSettings):
         return f"redis://{self.host}:{self.port}/{self.db}"
 
 
-class ServerSettings(BaseSettings):
+class ServerSettings(BaseModel):
     """Server configuration."""
 
     host: str = "0.0.0.0"
@@ -61,17 +61,17 @@ class ServerSettings(BaseSettings):
     reload: bool = False
 
 
-class AdServingSettings(BaseSettings):
+class AdServingSettings(BaseModel):
     """Ad serving configuration."""
 
     default_num_ads: int = 1
     max_num_ads: int = 10
     timeout_ms: int = 50
-    enable_ml_prediction: bool = True
+    enable_ml_prediction: bool = False
     model_path: str = ""  # Path to CTR model for prediction
 
 
-class FrequencySettings(BaseSettings):
+class FrequencySettings(BaseModel):
     """Frequency control configuration."""
 
     default_daily_cap: int = 3
@@ -79,7 +79,7 @@ class FrequencySettings(BaseSettings):
     ttl_hours: int = 24
 
 
-class MLSettings(BaseSettings):
+class MLSettings(BaseModel):
     """ML model configuration."""
 
     model_dir: str = "./models"
@@ -89,14 +89,14 @@ class MLSettings(BaseSettings):
     batch_size: int = 128
 
 
-class LoggingSettings(BaseSettings):
+class LoggingSettings(BaseModel):
     """Logging configuration."""
 
     level: str = "INFO"
     format: Literal["json", "console"] = "json"
 
 
-class MonitoringSettings(BaseSettings):
+class MonitoringSettings(BaseModel):
     """Monitoring configuration."""
 
     enabled: bool = True
@@ -161,55 +161,10 @@ def get_settings() -> Settings:
     """
     Get application settings.
 
-    Loads from:
-    1. configs/base.yaml (base configuration)
-    2. configs/{env}.yaml (environment-specific overrides)
-    3. Environment variables (highest priority)
+    Loads from environment variables with LITEADS_ prefix.
+    Nested settings use __ delimiter (e.g., LITEADS_REDIS__HOST).
     """
-    import os
-
-    env = os.getenv("LITEADS_ENV", "dev")
-
-    # Find config directory
-    config_dir = Path(__file__).parent.parent.parent / "configs"
-
-    # Load base config
-    base_config = load_yaml_config(config_dir / "base.yaml")
-
-    # Load environment-specific config
-    env_config = load_yaml_config(config_dir / f"{env}.yaml")
-
-    # Merge configurations
-    merged = merge_configs(base_config, env_config)
-
-    # Flatten nested config for Pydantic
-    flat_config = {}
-    if "app" in merged:
-        flat_config["app_name"] = merged["app"].get("name", "LiteAds")
-        flat_config["app_version"] = merged["app"].get("version", "0.1.0")
-        flat_config["debug"] = merged["app"].get("debug", False)
-
-    flat_config["env"] = env
-
-    # Create nested settings
-    if "server" in merged:
-        flat_config["server"] = ServerSettings(**merged["server"])
-    if "database" in merged:
-        flat_config["database"] = DatabaseSettings(**merged["database"])
-    if "redis" in merged:
-        flat_config["redis"] = RedisSettings(**merged["redis"])
-    if "ad_serving" in merged:
-        flat_config["ad_serving"] = AdServingSettings(**merged["ad_serving"])
-    if "frequency" in merged:
-        flat_config["frequency"] = FrequencySettings(**merged["frequency"])
-    if "ml" in merged:
-        flat_config["ml"] = MLSettings(**merged["ml"])
-    if "logging" in merged:
-        flat_config["logging"] = LoggingSettings(**merged["logging"])
-    if "monitoring" in merged:
-        flat_config["monitoring"] = MonitoringSettings(**merged["monitoring"])
-
-    return Settings(**flat_config)
+    return Settings()
 
 
 # Convenience alias
