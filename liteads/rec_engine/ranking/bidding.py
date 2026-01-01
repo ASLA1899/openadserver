@@ -4,6 +4,7 @@ Bidding and ranking module.
 Implements various bidding strategies and ranking algorithms.
 """
 
+import random
 from enum import IntEnum
 from typing import Any
 
@@ -71,6 +72,10 @@ class Bidding:
         elif candidate.bid_type == BidType.OCPM:
             # OCPM: Optimized CPM, uses expected value
             ecpm = bid * pctr * 1000
+        elif candidate.bid_type == BidType.FLAT_RATE:
+            # Flat rate: no per-event cost, use base eCPM of 1.0
+            # priority_boost will be applied in calculate_score
+            ecpm = 1.0
         else:
             ecpm = bid * pctr * 1000  # Default to CPC-like
 
@@ -86,10 +91,13 @@ class Bidding:
         - ENGAGEMENT: Prioritize high CTR ads
         - CONVERSION: Prioritize high CVR ads
         - HYBRID: Balance of multiple factors
+
+        All strategies apply priority_boost as a multiplier.
         """
         ecpm = self.calculate_ecpm(candidate)
         pctr = candidate.pctr
         pcvr = candidate.pcvr
+        priority_boost = getattr(candidate, 'priority_boost', 1.0) or 1.0
 
         if self.strategy == RankingStrategy.ECPM:
             score = ecpm
@@ -116,7 +124,8 @@ class Bidding:
         else:
             score = ecpm
 
-        return score
+        # Apply priority boost multiplier
+        return score * priority_boost
 
     def rank(
         self,
@@ -141,8 +150,13 @@ class Bidding:
                 candidate.ecpm = self.calculate_ecpm(candidate)
             candidate.score = self.calculate_score(candidate)
 
-        # Sort by score descending
-        ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
+        # Sort by score descending, with random tiebreaker for equal scores
+        # This ensures fair rotation when campaigns have equal weights
+        ranked = sorted(
+            candidates,
+            key=lambda c: (c.score, random.random()),
+            reverse=True,
+        )
 
         logger.debug(
             f"Ranked {len(ranked)} candidates",
