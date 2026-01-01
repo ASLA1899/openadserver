@@ -34,11 +34,7 @@ dependencies = [
     # Redis
     "redis>=5.0.0",
 
-    # ML & Data Processing
-    "torch>=2.1.0",
-    "scikit-learn>=1.3.0",
-    "pandas>=2.1.0",
-    "polars>=0.19.0",
+    # Data Processing (lightweight)
     "numpy>=1.26.0",
 
     # Task Queue
@@ -52,9 +48,19 @@ dependencies = [
     "pyyaml>=6.0",
     "python-dotenv>=1.0.0",
     "orjson>=3.9.0",
+
+    # Image Processing
+    "Pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
+ml = [
+    # ML & Data Processing (optional - for training and ML prediction)
+    "torch>=2.1.0",
+    "scikit-learn>=1.3.0",
+    "pandas>=2.1.0",
+    "polars>=0.19.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
