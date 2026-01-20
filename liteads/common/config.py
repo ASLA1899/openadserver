@@ -69,6 +69,9 @@ class AdServingSettings(BaseModel):
     timeout_ms: int = 50
     enable_ml_prediction: bool = False
     model_path: str = ""  # Path to CTR model for prediction
+    # Use HTTP Referer header as fallback for page_url when not provided.
+    # This enables domain targeting for iframe embeds. Set to False to disable.
+    use_referer_for_targeting: bool = True
 
 
 class FrequencySettings(BaseModel):
