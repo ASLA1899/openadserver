@@ -67,7 +67,9 @@ class DiversityReranker(BaseReranker):
             return []
 
         result: list[AdCandidate] = []
+        # Shuffle remaining to randomize tie-breaking when scores are equal
         remaining = list(candidates)
+        random.shuffle(remaining)
         advertiser_counts: dict[int, int] = {}
 
         while len(result) < num_results and remaining:

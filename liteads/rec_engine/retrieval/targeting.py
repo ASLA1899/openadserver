@@ -4,7 +4,10 @@ Targeting-based retrieval.
 Retrieves ads based on targeting rules matching user attributes.
 """
 
+import fnmatch
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,9 +30,111 @@ class TargetingRetrieval(BaseRetrieval):
     eligible ads.
     """
 
+    # Pattern to extract dimensions from slot_id (e.g., "leaderboard-728x90" → 728, 90)
+    _DIMENSION_PATTERN = re.compile(r"(\d+)x(\d+)")
+
     def __init__(self, session: AsyncSession):
         self.session = session
         self._cache_ttl = 300  # 5 minutes
+
+    @staticmethod
+    def _parse_slot_dimensions(slot_id: str) -> tuple[int, int] | None:
+        """
+        Parse width and height from slot_id.
+
+        Examples:
+            "leaderboard-728x90" → (728, 90)
+            "sidebar-300x250" → (300, 250)
+            "homepage-banner" → None (no dimensions found)
+        """
+        match = TargetingRetrieval._DIMENSION_PATTERN.search(slot_id)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+        return None
+
+    @staticmethod
+    def _creative_matches_slot(
+        creative_data: dict[str, Any],
+        slot_dimensions: tuple[int, int] | None,
+    ) -> bool:
+        """Check if creative dimensions match the slot dimensions."""
+        if slot_dimensions is None:
+            return True  # No slot dimensions = accept any creative
+
+        slot_width, slot_height = slot_dimensions
+        creative_width = creative_data.get("width")
+        creative_height = creative_data.get("height")
+
+        # If creative has no dimensions, accept it (legacy support)
+        if creative_width is None or creative_height is None:
+            return True
+
+        return creative_width == slot_width and creative_height == slot_height
+
+    @staticmethod
+    def _extract_domain(url: str) -> str | None:
+        """
+        Extract domain from URL.
+
+        Examples:
+            "https://www.asla.org/page" → "asla.org"
+            "https://blog.example.com/post" → "example.com"
+        """
+        if not url:
+            return None
+        try:
+            parsed = urlparse(url)
+            host = parsed.netloc.lower()
+            # Remove www. prefix
+            if host.startswith("www."):
+                host = host[4:]
+            # Extract base domain (last two parts for most TLDs)
+            parts = host.split(".")
+            if len(parts) >= 2:
+                return ".".join(parts[-2:])
+            return host
+        except Exception:
+            return None
+
+    @staticmethod
+    def _match_domain_targeting(
+        target_domains: list[str] | str | None,
+        page_url: str | None,
+    ) -> bool:
+        """Check if page URL domain matches target domains."""
+        if not target_domains:
+            return True  # No domain targeting = match all
+
+        if not page_url:
+            return True  # No page URL = can't filter, allow
+
+        # Parse JSON string if needed
+        if isinstance(target_domains, str):
+            try:
+                target_domains = json_loads(target_domains)
+            except (ValueError, TypeError):
+                return True  # Invalid JSON, skip filtering
+
+        # After parsing, check if it's a valid list
+        if not target_domains or not isinstance(target_domains, list):
+            return True
+
+        page_domain = TargetingRetrieval._extract_domain(page_url)
+        if not page_domain:
+            return True  # Can't parse domain = allow
+
+        # Check if page domain matches any target domain
+        for target in target_domains:
+            target_clean = target.lower().strip()
+            if target_clean.startswith("www."):
+                target_clean = target_clean[4:]
+            if page_domain == target_clean:
+                return True
+            # Also check if target is a subdomain match
+            if page_domain.endswith("." + target_clean):
+                return True
+
+        return False
 
     async def retrieve(
         self,
@@ -43,8 +148,9 @@ class TargetingRetrieval(BaseRetrieval):
 
         Flow:
         1. Get all active campaigns with creatives
-        2. For each campaign, check targeting rules
-        3. Return matching candidates
+        2. For each campaign, check targeting rules and page targeting
+        3. Separate paid ads from house ads
+        4. Return paid ads, or house ads as fallback
         """
         # Get active campaigns (with caching)
         campaigns = await self._get_active_campaigns()
@@ -53,21 +159,47 @@ class TargetingRetrieval(BaseRetrieval):
             logger.debug("No active campaigns found")
             return []
 
-        candidates: list[AdCandidate] = []
+        # Parse slot dimensions for filtering
+        slot_dimensions = self._parse_slot_dimensions(slot_id)
+        if slot_dimensions:
+            logger.debug(f"Slot {slot_id} requires dimensions: {slot_dimensions[0]}x{slot_dimensions[1]}")
+
+        paid_candidates: list[AdCandidate] = []
+        house_candidates: list[AdCandidate] = []
+
+        # Get page URL from context if provided
+        page_url = kwargs.get("page_url") or (
+            user_context.page_url if hasattr(user_context, "page_url") else None
+        )
 
         for campaign_data in campaigns:
             # Check if campaign matches user targeting
             if not self._match_targeting(campaign_data, user_context):
                 continue
 
-            # Create candidate for each creative
+            # Check page targeting
+            if not self._match_page_targeting(campaign_data, page_url):
+                continue
+
+            # Check domain targeting
+            target_domains = campaign_data.get("target_domains")
+            if not self._match_domain_targeting(target_domains, page_url):
+                continue
+
+            is_house_ad = campaign_data.get("is_house_ad", False)
+
+            # Create candidate for each creative that matches slot dimensions
             for creative_data in campaign_data.get("creatives", []):
+                # Filter by slot dimensions
+                if not self._creative_matches_slot(creative_data, slot_dimensions):
+                    continue
                 candidate = AdCandidate(
                     campaign_id=campaign_data["id"],
                     creative_id=creative_data["id"],
                     advertiser_id=campaign_data["advertiser_id"],
                     bid=campaign_data["bid_amount"],
                     bid_type=campaign_data["bid_type"],
+                    priority_boost=campaign_data.get("priority_boost", 1.0),
                     title=creative_data.get("title"),
                     description=creative_data.get("description"),
                     image_url=creative_data.get("image_url"),
@@ -76,17 +208,72 @@ class TargetingRetrieval(BaseRetrieval):
                     creative_type=creative_data.get("creative_type", 1),
                     width=creative_data.get("width"),
                     height=creative_data.get("height"),
+                    is_house_ad=is_house_ad,
                 )
-                candidates.append(candidate)
 
-                if len(candidates) >= limit:
+                if is_house_ad:
+                    house_candidates.append(candidate)
+                else:
+                    paid_candidates.append(candidate)
+
+                if len(paid_candidates) >= limit and len(house_candidates) >= limit:
                     break
 
-            if len(candidates) >= limit:
+            if len(paid_candidates) >= limit and len(house_candidates) >= limit:
                 break
 
-        logger.debug(f"Retrieved {len(candidates)} candidates from targeting")
-        return candidates
+        # Return paid candidates if available, otherwise use house ads as fallback
+        if paid_candidates:
+            logger.debug(f"Retrieved {len(paid_candidates)} paid candidates")
+            return paid_candidates[:limit]
+        elif house_candidates:
+            logger.debug(f"No paid ads, using {len(house_candidates)} house ads as fallback")
+            return house_candidates[:limit]
+        else:
+            logger.debug("No candidates found (paid or house)")
+            return []
+
+    def _match_page_targeting(
+        self,
+        campaign_data: dict[str, Any],
+        page_url: str | None,
+    ) -> bool:
+        """Check if page URL matches campaign page targeting rules."""
+        page_targeting = campaign_data.get("page_targeting")
+
+        if not page_targeting:
+            return True  # No page targeting = match all pages
+
+        if not page_url:
+            return True  # No page URL provided = can't filter
+
+        # Parse JSON string if needed
+        if isinstance(page_targeting, str):
+            try:
+                page_targeting = json_loads(page_targeting)
+            except (ValueError, TypeError):
+                return True  # Invalid JSON, skip filtering
+
+        # After parsing, check if it's a valid dict
+        if not page_targeting or not isinstance(page_targeting, dict):
+            return True
+
+        include_patterns = page_targeting.get("include", [])
+        exclude_patterns = page_targeting.get("exclude", [])
+
+        # Check exclude patterns first (if matched, reject)
+        for pattern in exclude_patterns:
+            if fnmatch.fnmatch(page_url, pattern):
+                return False
+
+        # If include patterns exist, must match at least one
+        if include_patterns:
+            for pattern in include_patterns:
+                if fnmatch.fnmatch(page_url, pattern):
+                    return True
+            return False  # Didn't match any include pattern
+
+        return True  # No include patterns = match all (after exclude check)
 
     async def _get_active_campaigns(self) -> list[dict[str, Any]]:
         """Get all active campaigns with creatives and targeting rules."""
@@ -122,12 +309,16 @@ class TargetingRetrieval(BaseRetrieval):
                 "name": campaign.name,
                 "bid_type": campaign.bid_type,
                 "bid_amount": float(campaign.bid_amount),
+                "priority_boost": float(campaign.priority_boost) if campaign.priority_boost else 1.0,
                 "budget_daily": float(campaign.budget_daily) if campaign.budget_daily else None,
                 "budget_total": float(campaign.budget_total) if campaign.budget_total else None,
                 "spent_today": float(campaign.spent_today),
                 "spent_total": float(campaign.spent_total),
                 "freq_cap_daily": campaign.freq_cap_daily,
                 "freq_cap_hourly": campaign.freq_cap_hourly,
+                "is_house_ad": getattr(campaign, 'is_house_ad', False),
+                "page_targeting": getattr(campaign, 'page_targeting', None),
+                "target_domains": getattr(campaign, 'target_domains', None),
                 "creatives": [],
                 "targeting_rules": [],
             }

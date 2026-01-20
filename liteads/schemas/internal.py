@@ -16,6 +16,9 @@ class AdCandidate:
     bid: float
     bid_type: int
 
+    # Priority boost multiplier (1.0 = normal, 2.0 = double priority)
+    priority_boost: float = 1.0
+
     # Targeting match info
     targeting_score: float = 1.0
 
@@ -36,6 +39,9 @@ class AdCandidate:
     creative_type: int = 1
     width: int | None = None
     height: int | None = None
+
+    # House ad flag (no cost, fallback only)
+    is_house_ad: bool = False
 
     # Extra info
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -65,6 +71,7 @@ class UserContext:
     # Context
     app_id: str = ""
     app_name: str = ""
+    page_url: str = ""  # Current page URL for page targeting
     network: str = ""
     carrier: str = ""
 

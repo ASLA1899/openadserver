@@ -8,6 +8,7 @@ from typing import Any
 from liteads.common.cache import CacheKeys, redis_client
 from liteads.common.logger import get_logger
 from liteads.common.utils import current_date
+from liteads.models.base import BidType
 from liteads.rec_engine.filter.base import BaseFilter
 from liteads.schemas.internal import AdCandidate, BudgetInfo, UserContext
 
@@ -51,6 +52,11 @@ class BudgetFilter(BaseFilter):
         # Filter
         result = []
         for candidate in candidates:
+            # Flat rate campaigns bypass budget filtering
+            if candidate.bid_type == BidType.FLAT_RATE:
+                result.append(candidate)
+                continue
+
             budget_info = budget_infos.get(candidate.campaign_id)
             if budget_info and budget_info.has_budget:
                 result.append(candidate)
@@ -68,6 +74,10 @@ class BudgetFilter(BaseFilter):
         **kwargs: Any,
     ) -> bool:
         """Check if single candidate has budget."""
+        # Flat rate campaigns bypass budget filtering
+        if candidate.bid_type == BidType.FLAT_RATE:
+            return True
+
         budget_info = await self._get_budget(candidate.campaign_id)
         return budget_info.has_budget
 

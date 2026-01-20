@@ -36,10 +36,11 @@ class Status(IntEnum):
 
 class BidType(IntEnum):
     """Bid type enum."""
-    CPM = 1   # Cost per mille (1000 impressions)
-    CPC = 2   # Cost per click
-    CPA = 3   # Cost per action/conversion
-    OCPM = 4  # Optimized CPM
+    CPM = 1        # Cost per mille (1000 impressions)
+    CPC = 2        # Cost per click
+    CPA = 3        # Cost per action/conversion
+    OCPM = 4       # Optimized CPM
+    FLAT_RATE = 5  # Prepaid flat rate (no per-event cost)
 
 
 class CreativeType(IntEnum):
@@ -48,3 +49,10 @@ class CreativeType(IntEnum):
     NATIVE = 2
     VIDEO = 3
     INTERSTITIAL = 4
+
+
+class EventType(IntEnum):
+    """Event type enum."""
+    IMPRESSION = 1
+    CLICK = 2
+    CONVERSION = 3

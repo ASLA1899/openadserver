@@ -1,0 +1,36 @@
+# Node modules
+**/node_modules
+admin-dashboard/node_modules
+admin-dashboard/dist
+
+# Python
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+.venv
+venv
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Docs
+docs
+
+# Tests
+tests
+**/*.test.ts
+**/*.spec.ts
+
+# Other
+*.md
+!README.md
+.env*
+*.log

@@ -37,6 +37,7 @@ class ContextInfo(BaseModel):
     app_name: str | None = Field(None, description="App name")
     app_version: str | None = Field(None, description="App version")
     app_bundle: str | None = Field(None, description="App bundle ID")
+    page_url: str | None = Field(None, description="Current page URL for web targeting")
     carrier: str | None = Field(None, description="Mobile carrier")
     network: str | None = Field(None, description="Network type (wifi/4g/5g)")
     connection_type: str | None = Field(None, description="Connection type")

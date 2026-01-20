@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from liteads.ad_server.middleware.metrics import MetricsMiddleware, metrics_endpoint
-from liteads.ad_server.routers import ad, event, health
+from liteads.ad_server.routers import ad, event, health, media
 from liteads.common.cache import redis_client
 from liteads.common.config import get_settings
 from liteads.common.database import close_db, create_tables, init_db
@@ -159,7 +159,8 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health.router, tags=["health"])
     app.include_router(ad.router, prefix="/api/v1/ad", tags=["ad"])
-    app.include_router(event.router, prefix="/api/v1/event", tags=["event"])
+    app.include_router(event.router, prefix="/api/v1/px", tags=["pixel"])
+    app.include_router(media.router, prefix="/res", tags=["media"])
 
     return app
 

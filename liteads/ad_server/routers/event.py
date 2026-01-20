@@ -58,11 +58,11 @@ async def track_event(
     )
 
 
-@router.get("/track")
+@router.get("/")
 async def track_event_get(
-    type: str = Query(..., alias="type", description="Event type"),
-    req: str = Query(..., description="Request ID"),
-    ad: str = Query(..., description="Ad ID"),
+    t: str = Query(..., description="Event type (v=view, c=click, x=conversion)"),
+    r: str = Query(..., description="Request ID"),
+    i: str = Query(..., description="ID"),
     event_service: EventService = Depends(get_event_service),
 ) -> EventResponse:
     """
@@ -71,17 +71,17 @@ async def track_event_get(
     This endpoint is used for tracking URLs embedded in ads.
     """
     log_context(
-        request_id=req,
-        ad_id=ad,
-        event_type=type,
+        request_id=r,
+        ad_id=i,
+        event_type=t,
     )
 
     logger.info("Pixel event received")
 
     success = await event_service.track_event(
-        request_id=req,
-        ad_id=ad,
-        event_type=type,
+        request_id=r,
+        ad_id=i,
+        event_type=t,
         user_id=None,
         timestamp=current_timestamp(),
         extra=None,

@@ -110,6 +110,7 @@ class AdService:
         if request.context:
             ctx.app_id = request.context.app_id or ""
             ctx.app_name = request.context.app_name or ""
+            ctx.page_url = request.context.page_url or ""
             ctx.network = request.context.network or ""
             ctx.carrier = request.context.carrier or ""
 
