@@ -72,26 +72,30 @@ class TargetingRetrieval(BaseRetrieval):
         return creative_width == slot_width and creative_height == slot_height
 
     @staticmethod
-    def _extract_domain(url: str) -> str | None:
+    def _normalize_host(value: str | None) -> str | None:
         """
-        Extract domain from URL.
+        Extract a normalized hostname from a URL or bare host string.
 
-        Examples:
-            "https://www.asla.org/page" → "asla.org"
-            "https://blog.example.com/post" → "example.com"
+        Handles full URLs ("https://qa.example.com/path"), scheme-less
+        inputs ("qa.example.com"), and inputs with ports. Returns the
+        full hostname (subdomains preserved), lowercased and with
+        leading "www." stripped.
         """
-        if not url:
+        if not value:
             return None
         try:
-            parsed = urlparse(url)
-            host = parsed.netloc.lower()
-            # Remove www. prefix
+            cleaned = value.strip()
+            if not cleaned:
+                return None
+            # urlparse needs a scheme to populate netloc; add one if absent
+            if "://" not in cleaned:
+                cleaned = "//" + cleaned
+            parsed = urlparse(cleaned)
+            host = (parsed.hostname or "").lower()
+            if not host:
+                return None
             if host.startswith("www."):
                 host = host[4:]
-            # Extract base domain (last two parts for most TLDs)
-            parts = host.split(".")
-            if len(parts) >= 2:
-                return ".".join(parts[-2:])
             return host
         except Exception:
             return None
@@ -119,19 +123,19 @@ class TargetingRetrieval(BaseRetrieval):
         if not target_domains or not isinstance(target_domains, list):
             return True
 
-        page_domain = TargetingRetrieval._extract_domain(page_url)
-        if not page_domain:
+        page_host = TargetingRetrieval._normalize_host(page_url)
+        if not page_host:
             return True  # Can't parse domain = allow
 
-        # Check if page domain matches any target domain
+        # Match if page host equals a target, or target is a parent domain
+        # of the page host (e.g. target "asla.org" matches "blog.asla.org").
         for target in target_domains:
-            target_clean = target.lower().strip()
-            if target_clean.startswith("www."):
-                target_clean = target_clean[4:]
-            if page_domain == target_clean:
+            target_host = TargetingRetrieval._normalize_host(target)
+            if not target_host:
+                continue
+            if page_host == target_host:
                 return True
-            # Also check if target is a subdomain match
-            if page_domain.endswith("." + target_clean):
+            if page_host.endswith("." + target_host):
                 return True
 
         return False
@@ -159,8 +163,16 @@ class TargetingRetrieval(BaseRetrieval):
             logger.debug("No active campaigns found")
             return []
 
-        # Parse slot dimensions for filtering
-        slot_dimensions = self._parse_slot_dimensions(slot_id)
+        requested_size = kwargs.get("requested_size")
+
+        # Parse requested dimensions for filtering. The optional requested_size
+        # lets a logical placement serve multiple creative sizes without
+        # encoding the size in the placement ID used by the publisher.
+        slot_dimensions = (
+            self._parse_slot_dimensions(requested_size)
+            if requested_size
+            else self._parse_slot_dimensions(slot_id)
+        )
         if slot_dimensions:
             logger.debug(f"Slot {slot_id} requires dimensions: {slot_dimensions[0]}x{slot_dimensions[1]}")
 
