@@ -71,6 +71,7 @@ class AdService:
             user_context=user_context,
             slot_id=request.slot_id,
             num_ads=request.num_ads,
+            requested_size=request.requested_size,
         )
 
         logger.info(

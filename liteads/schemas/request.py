@@ -57,6 +57,10 @@ class AdRequest(BaseModel):
     """Ad request schema."""
 
     slot_id: str = Field(..., description="Ad slot identifier")
+    requested_size: str | None = Field(
+        None,
+        description="Requested creative size, e.g. 728x90 or 300x250",
+    )
     user_id: str | None = Field(None, description="User identifier (IMEI/IDFA/custom)")
     device: DeviceInfo = Field(..., description="Device information")
     geo: GeoInfo | None = Field(None, description="Geographic information")

@@ -194,6 +194,7 @@ class RecommendationEngine:
                     user_context=user_context,
                     slot_id=slot_id,
                     limit=self.config.max_retrieval,
+                    **kwargs,
                 )
             metrics.retrieval_ms = retrieval_timer.elapsed_ms
             metrics.retrieval_count = len(candidates)

@@ -3,7 +3,7 @@ Ad serving endpoints.
 """
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from liteads.ad_server.routers.media import encode_url
@@ -28,6 +28,35 @@ STANDARD_AD_SIZES = {
 
 # Cache version - increment when proxy route/behavior changes to bust browser cache
 PROXY_CACHE_VERSION = 2
+
+
+def _parse_ad_size(value: str | None) -> tuple[int, int] | None:
+    """Parse an ad size string like 728x90."""
+    if not value:
+        return None
+
+    import re
+
+    match = re.fullmatch(r"\s*(\d{2,4})x(\d{2,4})\s*", value)
+    if not match:
+        return None
+
+    return int(match.group(1)), int(match.group(2))
+
+
+def _get_slot_dimensions(slot: str, size: str | None = None) -> tuple[int, int]:
+    """Get requested dimensions from size first, then from slot name."""
+    parsed_size = _parse_ad_size(size)
+    if parsed_size:
+        return parsed_size
+
+    import re
+
+    dim_match = re.search(r"(\d+)x(\d+)", slot)
+    if dim_match:
+        return int(dim_match.group(1)), int(dim_match.group(2))
+
+    return 300, 250
 
 
 def _get_page_url_from_referer(request: Request) -> str | None:
@@ -223,10 +252,89 @@ def _get_creative_type_name(creative_type: int) -> str:
     return types.get(creative_type, "banner")
 
 
+@router.get("/tag.js")
+async def responsive_ad_tag(
+    request: Request,
+    slot: str = Query(..., description="Logical slot ID"),
+    desktop_size: str = Query("728x90", description="Desktop creative size"),
+    mobile_size: str = Query("300x250", description="Mobile creative size"),
+    breakpoint: int = Query(767, ge=1, le=4000, description="Mobile max width"),
+) -> Response:
+    """
+    JavaScript tag that injects one responsive ad iframe.
+
+    Publisher usage:
+        <script src="https://media.aslalabs.org/api/v1/ad/tag.js?slot=homepage-leaderboard" async></script>
+    """
+    import json
+
+    desktop_dimensions = _parse_ad_size(desktop_size) or (728, 90)
+    mobile_dimensions = _parse_ad_size(mobile_size) or (300, 250)
+    desktop_size = f"{desktop_dimensions[0]}x{desktop_dimensions[1]}"
+    mobile_size = f"{mobile_dimensions[0]}x{mobile_dimensions[1]}"
+
+    base_url = str(request.base_url).rstrip("/")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
+    if forwarded_proto == "https" and base_url.startswith("http://"):
+        base_url = "https://" + base_url[7:]
+
+    script = f"""(function() {{
+  var script = document.currentScript;
+  if (!script || !script.parentNode) return;
+
+  var slot = {json.dumps(slot)};
+  var desktopSize = {json.dumps(desktop_size)};
+  var mobileSize = {json.dumps(mobile_size)};
+  var breakpoint = {breakpoint};
+  var baseUrl = {json.dumps(base_url)};
+
+  function parseSize(value) {{
+    var parts = String(value).split("x");
+    return {{ width: parseInt(parts[0], 10), height: parseInt(parts[1], 10) }};
+  }}
+
+  var selectedSize = window.matchMedia("(max-width: " + breakpoint + "px)").matches
+    ? mobileSize
+    : desktopSize;
+  var dimensions = parseSize(selectedSize);
+
+  var container = document.createElement("div");
+  container.className = "oas-ad-slot";
+  container.style.display = "flex";
+  container.style.justifyContent = "center";
+  container.style.alignItems = "center";
+  container.style.width = "100%";
+  container.style.minHeight = dimensions.height + "px";
+
+  var iframe = document.createElement("iframe");
+  iframe.src = baseUrl + "/api/v1/ad/embed?slot=" + encodeURIComponent(slot)
+    + "&size=" + encodeURIComponent(selectedSize);
+  iframe.width = String(dimensions.width);
+  iframe.height = String(dimensions.height);
+  iframe.setAttribute("title", "Advertisement");
+  iframe.setAttribute("frameborder", "0");
+  iframe.setAttribute("scrolling", "no");
+  iframe.style.border = "0";
+  iframe.style.overflow = "hidden";
+  iframe.style.display = "block";
+  iframe.style.width = dimensions.width + "px";
+  iframe.style.height = dimensions.height + "px";
+  iframe.style.maxWidth = "100%";
+
+  container.appendChild(iframe);
+  script.parentNode.insertBefore(container, script);
+}})();
+"""
+    response = Response(content=script, media_type="application/javascript")
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return response
+
+
 @router.get("/serve")
 async def serve_ad_image(
     request: Request,
     slot: str = Query(..., description="Slot ID (e.g., 'leaderboard-728x90')"),
+    size: str | None = Query(None, description="Requested size (e.g., '300x250')"),
     ad_service: AdService = Depends(get_ad_service),
 ) -> RedirectResponse:
     """
@@ -244,17 +352,14 @@ async def serve_ad_image(
     """
     request_id = generate_request_id()
 
-    # Parse dimensions from slot ID
-    import re
-    dim_match = re.search(r"(\d+)x(\d+)", slot)
-    width = int(dim_match.group(1)) if dim_match else 300
-    height = int(dim_match.group(2)) if dim_match else 250
+    width, height = _get_slot_dimensions(slot, size)
 
     # Build ad request with Referer for domain targeting
     from liteads.schemas.request import ContextInfo, DeviceInfo
     page_url = _get_page_url_from_referer(request)
     ad_request = AdRequest(
         slot_id=slot,
+        requested_size=f"{width}x{height}" if size else None,
         num_ads=1,
         device=DeviceInfo(os="web"),
         context=ContextInfo(page_url=page_url) if page_url else None,
@@ -396,6 +501,7 @@ async def click_through(
 async def embed_ad(
     request: Request,
     slot: str = Query(..., description="Slot ID (e.g., 'leaderboard-728x90')"),
+    size: str | None = Query(None, description="Requested size (e.g., '300x250')"),
     ad_service: AdService = Depends(get_ad_service),
 ) -> HTMLResponse:
     """
@@ -411,11 +517,7 @@ async def embed_ad(
     request_id = generate_request_id()
     settings = get_settings()
 
-    # Parse dimensions from slot ID if present (e.g., "leaderboard-728x90" -> 728, 90)
-    import re
-    dim_match = re.search(r"(\d+)x(\d+)", slot)
-    width = int(dim_match.group(1)) if dim_match else 300
-    height = int(dim_match.group(2)) if dim_match else 250
+    width, height = _get_slot_dimensions(slot, size)
 
     # Build a minimal ad request with default device info
     # Use Referer header for domain targeting when available
@@ -423,6 +525,7 @@ async def embed_ad(
     page_url = _get_page_url_from_referer(request)
     ad_request = AdRequest(
         slot_id=slot,
+        requested_size=f"{width}x{height}" if size else None,
         num_ads=1,
         device=DeviceInfo(os="web"),
         context=ContextInfo(page_url=page_url) if page_url else None,
