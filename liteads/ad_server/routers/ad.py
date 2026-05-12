@@ -589,7 +589,7 @@ img {{ display: block; max-width: 100%; height: auto; }}
 </style>
 </head>
 <body>
-<a href="{click_url}" target="_top" rel="noopener">
+<a href="{click_url}" target="_blank" rel="noopener">
 <img src="{proxied_image_url}" width="{display_width}" height="{display_height}" alt="{candidate.title or 'Advertisement'}" />
 </a>
 <img src="{impression_url}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />
