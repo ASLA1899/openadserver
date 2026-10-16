@@ -27,7 +27,7 @@ STANDARD_AD_SIZES = {
 
 
 # Cache version - increment when proxy route/behavior changes to bust browser cache
-PROXY_CACHE_VERSION = 2
+PROXY_CACHE_VERSION = 3
 
 
 def _parse_ad_size(value: str | None) -> tuple[int, int] | None:
@@ -86,32 +86,19 @@ def _get_page_url_from_referer(request: Request) -> str | None:
     return None
 
 
-def _get_proxied_image_url(
-    base_url: str,
-    image_url: str | None,
-    width: int | None,
-    height: int | None,
-) -> str | None:
+def _get_proxied_image_url(base_url: str, image_url: str | None) -> str | None:
     """
     Convert an image URL to a proxied URL.
 
-    Offsets dimensions by 1 pixel if they match standard ad sizes
-    to avoid dimension-based ad blocking.
+    The image bytes are passed through untouched. The 1-pixel offset that
+    avoids dimension-based ad blocking is applied only to the displayed
+    width/height, so the browser scales the full-resolution source and the
+    ad stays sharp (including 2x creatives on HiDPI screens).
     """
     if not image_url:
         return None
 
-    # Encode the original URL
     encoded = encode_url(image_url)
-
-    # Check if dimensions match standard ad sizes
-    if width and height and (width, height) in STANDARD_AD_SIZES:
-        # Offset by 1 pixel to avoid detection
-        new_width = width - 1
-        new_height = height - 1
-        return f"{base_url}/res/{encoded}?w={new_width}&h={new_height}&v={PROXY_CACHE_VERSION}"
-
-    # No resize needed, just proxy
     return f"{base_url}/res/{encoded}?v={PROXY_CACHE_VERSION}"
 
 
@@ -193,12 +180,7 @@ async def request_ads(
         )
 
         # Build creative response with proxied image URL
-        proxied_image_url = _get_proxied_image_url(
-            base_url,
-            candidate.image_url,
-            candidate.width,
-            candidate.height,
-        )
+        proxied_image_url = _get_proxied_image_url(base_url, candidate.image_url)
 
         # Adjust dimensions if they were resized
         creative_width = candidate.width
@@ -384,9 +366,7 @@ async def serve_ad_image(
         base_url = "https://" + base_url[7:]
 
     # Get proxied image URL
-    proxied_image_url = _get_proxied_image_url(
-        base_url, candidate.image_url, candidate.width, candidate.height
-    )
+    proxied_image_url = _get_proxied_image_url(base_url, candidate.image_url)
 
     # Track impression
     from liteads.ad_server.services.event_service import EventService
@@ -563,12 +543,7 @@ async def embed_ad(
     # Build URLs
     impression_url = f"{base_url}/api/v1/px/?t=v&r={request_id}&i={ad_id}"
     click_url = f"{base_url}/api/v1/ad/go?r={request_id}&i={ad_id}"
-    proxied_image_url = _get_proxied_image_url(
-        base_url,
-        candidate.image_url,
-        candidate.width,
-        candidate.height,
-    )
+    proxied_image_url = _get_proxied_image_url(base_url, candidate.image_url)
 
     # Adjust dimensions for display
     display_width = candidate.width or width
